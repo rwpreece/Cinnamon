@@ -310,6 +310,15 @@ MyApplet.prototype = {
         }));
     },
 
+    _resizeStatusItemLater: function(role, icon, delay) {
+        // Resize the icon in the systray after a delay (useful for buggy icons)
+        // Delaying the resize may fix the icon issues when disk cache is empty
+        let timerId = Mainloop.timeout_add(delay, Lang.bind(this, function() {
+            this._resizeStatusItem(role, icon);
+            Mainloop.source_remove(timerId);
+        }));
+    },
+
     _onTrayIconRemoved: function(o, icon) {
         icon.obsolete = true;
         for (var i = 0; i < this._statusItems.length; i++) {
@@ -348,16 +357,7 @@ MyApplet.prototype = {
         }
         icon._rolePosition = position;
 
-        if (this._scaleMode) {
-            let timerId = Mainloop.timeout_add(500, Lang.bind(this, function() {
-                this._resizeStatusItem(role, icon);
-                Mainloop.source_remove(timerId);
-            }));
-        } else {
-            icon.set_pivot_point(0.5, 0.5);
-            icon.set_scale((DEFAULT_ICON_SIZE * global.ui_scale) / icon.width,
-                           (DEFAULT_ICON_SIZE * global.ui_scale) / icon.height);
-        }
+        this._resizeStatusItemLater(role, icon, 500);
     },
 
     _resizeStatusItem: function(role, icon) {
@@ -368,7 +368,8 @@ MyApplet.prototype = {
         if (["shutter", "filezilla"].indexOf(role) != -1) {
             global.log("Not resizing " + role + " as it's known to be buggy (" + icon.get_width() + "x" + icon.get_height() + "px)");
         } else {
-            let size = this._getIconSize(this._panelHeight);
+            let size = null;
+            size = this._getIconSize(this._panelHeight/global.ui_scale);
             icon.set_size(size, size);
             global.log("Resized " + role + " with normalized size (" + icon.get_width() + "x" + icon.get_height() + "px)");
             //Note: dropbox doesn't scale, even though we resize it...
