@@ -365,6 +365,8 @@ MyApplet.prototype = {
             return;
         }
 
+        // Should these be included here as well as in the _onTrayIconAdded method above?
+        // if (["shutter", "filezilla", "dropbox", "thunderbird", "unknown", "blueberry-tray.py", "mintupdate.py"].indexOf(role) != -1) {
         if (["shutter", "filezilla"].indexOf(role) != -1) {
             global.log("Not resizing " + role + " as it's known to be buggy (" + icon.get_width() + "x" + icon.get_height() + "px)");
         } else {
