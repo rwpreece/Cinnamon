@@ -117,3 +117,4 @@ stamp-h1
 tests/Makefile
 tests/Makefile.in
 tests/run-test.sh
+.idea/
