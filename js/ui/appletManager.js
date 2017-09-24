@@ -308,23 +308,32 @@ function addAppletToPanels(extension, appletDefinition) {
         applet._order = appletDefinition.order;
         applet._extension = extension;
 
+        let location = appletDefinition.location;
+
         // Remove it from its previous panel location (if it had one)
-        if (applet._panelLocation != null) {
+        if (applet._panelLocation != null && location != applet._panelLocation) {
             applet._panelLocation.remove_actor(applet.actor);
             applet._panelLocation = null;
         }
-
-        let location = appletDefinition.location;
 
         let before = location.get_children()
             .find(x => {
                 return x._applet && (x._applet instanceof Applet.Applet) && (appletDefinition.order < x._applet._order)
             });
 
-        if (before)
-            location.insert_child_below(applet.actor, before);
-        else
-            location.add_actor(applet.actor);
+        if (before) {
+            if (applet._panelLocation == null) {
+                location.insert_child_below(applet.actor, before);
+            } else {
+                location.set_child_below_sibling(applet.actor, before);
+            }
+        } else {
+            if (applet._panelLocation == null) {
+                location.add_actor(applet.actor);
+            } else {
+                location.set_child_above_sibling(applet.actor, null);
+            }
+        }
 
         applet._panelLocation = location;
 
@@ -541,6 +550,9 @@ function saveAppletsPositions() {
     for (let i = 0; i < enabled.length; i++) {
         let info = enabled[i].split(':');
         let applet = appletObj[info[4]];
+        if (!applet) {
+            continue;
+        }
         if (applet._newOrder !== null) {
             if (applet._newPanelId !== null) {
                 info[0] = 'panel' + applet._newPanelId;

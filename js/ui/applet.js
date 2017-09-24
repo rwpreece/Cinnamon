@@ -246,6 +246,7 @@ Applet.prototype = {
         this._dragging = true;
         this._applet_tooltip.hide();
         this._applet_tooltip.preventShow = true;
+        Main.panelManager.resetPanelDND();
     },
 
     _onDragEnd: function() {
@@ -514,11 +515,8 @@ Applet.prototype = {
             this.context_menu_item_about.connect('activate', Lang.bind(this, this.openAbout));
         }
 
-        if (this.context_menu_separator == null) {
+        if (this.context_menu_separator == null && this._applet_context_menu._getMenuItems().length > 0) {
             this.context_menu_separator = new PopupMenu.PopupSeparatorMenuItem();
-        }
-
-        if (this._applet_context_menu._getMenuItems().length > 0) {
             this._applet_context_menu.addMenuItem(this.context_menu_separator);
         }
 

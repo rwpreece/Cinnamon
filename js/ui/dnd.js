@@ -377,17 +377,23 @@ const _Draggable = new Lang.Class({
         let y = this._overrideY == undefined ? this._dragY : this._overrideY;
 
         if (this.recentDropTarget) {
-            let allocation = this.recentDropTarget.get_allocation_box();
+            let allocation = Cinnamon.util_get_transformed_allocation(this.recentDropTarget);
+
             if (x < allocation.x1 || x > allocation.x2 || y < allocation.y1 || y > allocation.y2) {
                 this.recentDropTarget._delegate.handleDragOut();
                 this.recentDropTarget = null;
             }
         }
 
-        if (this.target)
+        if (this.target) {
             target = this.target;
-        else
-            target = this._dragActor.get_stage().get_actor_at_pos(Clutter.PickMode.ALL, x, y);
+        } else {
+            let stage = this._dragActor.get_stage();
+            if (!stage) {
+                return;
+            }
+            target = stage.get_actor_at_pos(Clutter.PickMode.ALL, x, y);
+        }
 
         let dragEvent = {
             x: this._dragX,

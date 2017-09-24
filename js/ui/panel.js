@@ -234,6 +234,7 @@ function PanelManager() {
 PanelManager.prototype = {
     _init: function() {
         this.dummyPanels = [];
+        this.panelCount = 0;
         this.panels = [];
         this.panelsMeta = [];   // Properties of panels in format [<monitor index>, <panelPosition>]
         this.canAdd = true;     // Whether there is space for more panels to be added
@@ -454,6 +455,7 @@ PanelManager.prototype = {
      * Remove the panel from the list panels-enabled
      */
     removePanel: function(panelId) {
+        this.panelCount -= 1;
         let list = global.settings.get_strv("panels-enabled");
         for (let i = 0, len = list.length; i < len; i++) {
             if (list[i].split(":")[0] == panelId) {
@@ -712,23 +714,16 @@ PanelManager.prototype = {
         }
         let[toppheight,botpheight] = heightsUsedMonitor(monitorIndex, panelList);
         panelList[ID] = new Panel(ID, monitorIndex, panelPosition, toppheight, botpheight, drawcorner); // create a new panel
+        this.panelCount += 1;
 
         return panelList[ID];
     },
 
     _checkCanAdd: function() {
         let monitorCount = global.screen.get_n_monitors();
-        let panelCount = monitorCount * 4;          // max of 4 panels on a monitor, one per edge
+        let panelCount = (monitorCount * 4) - this.panelCount;          // max of 4 panels on a monitor, one per edge
 
-        for (let i = 0, len = this.panelsMeta.length; i < len; i++) {
-            if (this.panelsMeta[i] && this.panelsMeta[i][0] >= monitorCount)  // Monitor does not exist
-                continue;
-            panelCount --;
-        }
-
-        if (this.canAdd != (panelCount != 0)) {
-            this.canAdd = (panelCount != 0);
-        }
+        this.canAdd = panelCount > 0;
     },
 
     _updateAllPointerBarriers: function() {
@@ -952,6 +947,7 @@ PanelManager.prototype = {
                 if (this.panels[i]) {
                     this.panels[i].destroy();
                     delete this.panels[i];
+                    this.panelCount -= 1;
                 }
 
             } else { // Nothing happens. Re-allocate panel
@@ -1059,6 +1055,14 @@ PanelManager.prototype = {
             if (this.panels[i]) {
                 Main.panel = this.panels[i];
                 break;
+            }
+        }
+    },
+
+    resetPanelDND: function() {
+        for (let i = 0; i < this.panels.length; i++) {
+            if (this.panels[i]) {
+                this.panels[i].resetDNDZones();
             }
         }
     }
@@ -1466,8 +1470,10 @@ PanelCorner.prototype = {
         // ugly hack: force the panel to reset its clip region since we just added
         // to the total allocation after it has already clipped to its own
         // allocation
-        let panel = this._box.get_parent()._delegate;
-        panel._setClipRegion(panel._hidden);
+        let panel = this._box.get_parent();
+        // for some reason style-changed is called on destroy
+        if (panel && panel._delegate)
+            panel._delegate._setClipRegion(panel._delegate._hidden);
     }
 }; // end of panel corner
 
@@ -1641,82 +1647,100 @@ PanelZoneDNDHandler.prototype = {
         this._dragPlaceholder = null;
         this._dragPlaceholderPos = -1;
 
-        this._panelZone.connect('leave-event', Lang.bind(this, this._clearDragPlaceholder));
+        this._origAppletCenters = null;
+        this._origAppletPos = -1;
+
+        this._panelZone.connect('leave-event', Lang.bind(this, this._handleLeaveEvent));
     },
 
     handleDragOver: function(source, actor, x, y, time) {
 
         if (!(source instanceof Applet.Applet)) return DND.DragMotionResult.NO_DROP;
 
-        let children = this._panelZone.get_children();
-        let appletPos = children.indexOf(source.actor);
-
-        let vertical_panel = this._panelZone.get_parent()._delegate.is_vertical;
-
         if (!this._hasSupportedLayout(source)) {
             return DND.DragMotionResult.NO_DROP;
         }
 
-        let pos = 0;
-        let childProperty = vertical_panel ? 'height' : 'width';
+        let vertical_panel = this._panelZone.get_parent()._delegate.is_vertical;
+        let children = this._panelZone.get_children();
 
-        for (let i = 0, len = children.length; i < len; i++) {
-            let allocation = children[i].get_allocation_box();
-            let childCenter;
-            let dragCoord;
+        if (this._origAppletCenters == null) {
+            this._origAppletCenters = [];
+            this._origAppletPos = children.indexOf(source.actor);
+
+            let j;
+
+            for (j = 0; j < children.length; j++) {
+                let allocation = children[j].get_allocation_box();
+                let center = 0;
+                if (vertical_panel) {
+                    center = (allocation.y1 + allocation.y2) / 2;
+                } else {
+                    center = (allocation.x1 + allocation.x2) / 2;
+                }
+
+                this._origAppletCenters.push(center);
+            }
+        }
+
+        let pos = 0;
+        let i = 0;
+
+        while (i < this._origAppletCenters.length) {
             if (vertical_panel) {
-                childCenter = (allocation.y1 + allocation.y2) / 2;
-                dragCoord = y;
+                if (y > (this._origAppletCenters[i])) {
+                    pos = ++i;
+                } else {
+                    break;
+                }
+            } else {
+                if (x > (this._origAppletCenters[i])) {
+                    pos = ++i;
+                } else {
+                    break;
+                }
             }
-            else {
-                childCenter = (allocation.x1 + allocation.x2) / 2;
-                dragCoord = x;
-            }
-            if (dragCoord > childCenter) pos = i;
-            else break;
         }
 
         if (pos != this._dragPlaceholderPos) {
             this._dragPlaceholderPos = pos;
-
             // Don't allow positioning before or after self
-            if (appletPos != -1 && pos == appletPos) {
-                if (this._dragPlaceholder) {
-                    this._dragPlaceholder.animateOutAndDestroy();
-                }
-                this._dragPlaceholder = null;
 
+            if (this._origAppletPos != -1 && (pos == this._origAppletPos || pos == this._origAppletPos + 1)) {
+                this._clearDragPlaceholder();
                 return DND.DragMotionResult.CONTINUE;
             }
 
             // If the placeholder already exists, we just move
             // it, but if we are adding it, expand its size in
             // an animation
-            let fadeIn;
+
             if (this._dragPlaceholder) {
-                this._dragPlaceholder.actor.destroy();
-                fadeIn = false;
+                this._panelZone.set_child_at_index(this._dragPlaceholder.actor,
+                                                   this._dragPlaceholderPos);
             } else {
-                fadeIn = true;
-            }
+                this._dragPlaceholder = new DND.GenericDragPlaceholderItem();
 
-            this._dragPlaceholder = new DND.GenericDragPlaceholderItem();
-            if (vertical_panel) {
-                this._dragPlaceholder.child.set_width (10);
-                this._dragPlaceholder.child.set_height (20);
-            } else {
-                this._dragPlaceholder.child.set_width (20);
-                this._dragPlaceholder.child.set_height (10);
-            }
+                if (vertical_panel) {
+                    this._dragPlaceholder.child.set_width (10 * global.ui_scale);
+                    this._dragPlaceholder.child.set_height (20 * global.ui_scale);
+                } else {
+                    this._dragPlaceholder.child.set_width (20 * global.ui_scale);
+                    this._dragPlaceholder.child.set_height (10 * global.ui_scale);
+                }
 
-            this._panelZone.insert_child_at_index(this._dragPlaceholder.actor,
-                                                  this._dragPlaceholderPos);
+                this._panelZone.insert_child_at_index(this._dragPlaceholder.actor,
+                                                      this._dragPlaceholderPos);
 
-            if (fadeIn)
                 this._dragPlaceholder.animateIn();
+            }
         }
 
         return DND.DragMotionResult.MOVE_DROP;
+    },
+
+    _handleLeaveEvent: function() {
+        this._clearDragPlaceholder();
     },
 
     handleDragOut: function() {
@@ -1724,6 +1748,7 @@ PanelZoneDNDHandler.prototype = {
     },
 
     acceptDrop: function(source, actor, x, y, time) {
+        this._origAppletCenters = null;
 
         if (!(source instanceof Applet.Applet)) return false;
 
@@ -1738,7 +1763,7 @@ PanelZoneDNDHandler.prototype = {
 
         let children = this._panelZone.get_children();
         let curAppletPos = 0;
-        let insertAppletPos;
+        let insertAppletPos = null;
 
         for (let i = 0, len = children.length; i < len; i++) {
             if (children[i]._delegate instanceof Applet.Applet){
@@ -1749,14 +1774,41 @@ PanelZoneDNDHandler.prototype = {
                 curAppletPos++;
             }
         }
+
         source.actor._applet._newOrder = insertAppletPos;
         source.actor._applet._newPanelLocation = this._panelZone;
         source.actor._applet._zoneString = this._zoneString;
         source.actor._applet._newPanelId = this._panelId;
 
+        let sourcebox = source.actor._applet._panelLocation; /* this is the panel box providing the applet */
+
         this._clearDragPlaceholder();
         actor.destroy();
         AppletManager.saveAppletsPositions();
+
+        /* this._panelZone is the panel box being dropped into. Note that the style class name will
+           be something like 'panelLeft' or 'panelLeft vertical'*/
+
+        if (this._panelZone.has_style_class_name("panelRight") || this._panelZone.has_style_class_name("panelLeft")) {
+          this._panelZone.set_size(-1, -1);  /* kludge pt 2 - if the box being dropped into
+                                               has been set a fixed size then we need to let it adjust. */
+
+        }
+
+        if (sourcebox.has_style_class_name("panelRight") || sourcebox.has_style_class_name("panelLeft")) {
+          children = sourcebox.get_children();
+          if (children.length == 0) {         /* put back some minimum space if the source box is now empty */
+            if (sourcebox.get_parent()._delegate.is_vertical) {
+               let height = sourcebox.get_height();
+             if (height < EDIT_MODE_MIN_BOX_SIZE * global.ui_scale)
+                 sourcebox.set_height(EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+            } else {
+              let width = sourcebox.get_width();
+              if (width < EDIT_MODE_MIN_BOX_SIZE * global.ui_scale)
+                 sourcebox.set_width(EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+            }
+          }
+        }
 
         return true;
     },
@@ -1775,6 +1827,12 @@ PanelZoneDNDHandler.prototype = {
         if (applet instanceof Applet.IconApplet && !(applet instanceof Applet.TextIconApplet)) return true;
         if (layout == ((this._panelZone.get_parent()._delegate.is_vertical) ? Applet.AllowedLayout.VERTICAL : Applet.AllowedLayout.HORIZONTAL)) return true;
         return false;
+    },
+
+    reset: function() {
+        this._origAppletCenters = null;
+        this._origAppletPos = -1;
+        this._clearDragPlaceholder();
     }
 }
 
@@ -2289,6 +2347,38 @@ Panel.prototype = {
         this._centerBox.change_style_pseudo_class('dnd', this._panelEditMode);
         this._rightBox.change_style_pseudo_class('dnd', this._panelEditMode);
 
+        /* this next section is a bit of a kludge and should be reworked when
+           someone can find a better way. The issue is that boxlayout left and right
+           align can show no visible box when containing no applets.  This puts a
+           fixed min size in to permit a drop to happen in edit mode, it turns on
+           when selecting edit mode, and off when leaving.
+
+           Note that setting up to use the full width does not work, it gets
+           left alignment which doesn't seem to be able to be over-ridden,
+           and the applet gets a whole box fill effect which is weird when dragging
+           - perhaps x_fill etc. is turned on elsewhere  */
+
+        if (this._panelEditMode) {
+          if (this.is_vertical) {
+            let height = this._rightBox.get_height();
+            if (height < EDIT_MODE_MIN_BOX_SIZE * global.ui_scale)
+                this._rightBox.set_height(EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+            height = this._leftBox.get_height();
+            if (height < EDIT_MODE_MIN_BOX_SIZE * global.ui_scale)
+                this._leftBox.set_height(EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+          } else {
+            let width = this._rightBox.get_width();
+            if (width < EDIT_MODE_MIN_BOX_SIZE * global.ui_scale)
+                this._rightBox.set_width(EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+            width = this._leftBox.get_width();
+            if (width < EDIT_MODE_MIN_BOX_SIZE * global.ui_scale)
+                this._leftBox.set_width(EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+          }
+        } else {
+            this._rightBox.set_size(-1, -1);
+            this._leftBox.set_size(-1, -1);
+        }
+
         if (old_mode != this._panelEditMode) {
             this._updatePanelVisibility();
         }
@@ -2311,20 +2401,20 @@ Panel.prototype = {
                 // NB test on parent fails with centre aligned vertical box, but works for the test against the actor
                 if (this._context_menu._getMenuItems().length > 0 &&
                    (target.get_parent() == this.actor || target == this.actor)) {
-                    this._context_menu.toggle();
-                    if (!this._context_menu.isOpen)
-                        return;
-
-                    switch (this.panelPosition) {
-                        case PanelLoc.top:
-                        case PanelLoc.bottom:
-                            this._context_menu.shiftToPosition(x);
-                            break;
-                        case PanelLoc.left:
-                        case PanelLoc.right:
-                            this._context_menu.shiftToPosition(y);
-                            break;
+                    if (!this._context_menu.isOpen) {
+                        switch (this.panelPosition) {
+                            case PanelLoc.top:
+                            case PanelLoc.bottom:
+                                this._context_menu.shiftToPosition(x);
+                                break;
+                            case PanelLoc.left:
+                            case PanelLoc.right:
+                                this._context_menu.shiftToPosition(y);
+                                break;
+                        }
                     }
+
+                    this._context_menu.toggle();
                 }
             } catch(e) {
                 global.log(e);
@@ -2658,27 +2748,24 @@ Panel.prototype = {
     },
 
     _set_vertical_panel_style: function() {
-        this._rightBox.add_style_class_name('vertical');
-        this._rightBox.set_vertical(true);
-        this._rightBox.set_x_align(Clutter.ActorAlign.FILL);
-        this._rightBox.set_y_align(Clutter.ActorAlign.END);
 
         this._leftBox.add_style_class_name('vertical');
         this._leftBox.set_vertical(true);
         this._leftBox.set_x_align(Clutter.ActorAlign.FILL);
-        this._leftBox.set_y_align(Clutter.ActorAlign.FILL);
+        this._leftBox.set_y_align(Clutter.ActorAlign.START);
 
         this._centerBox.add_style_class_name('vertical');
         this._centerBox.set_vertical(true);
         this._centerBox.set_x_align(Clutter.ActorAlign.FILL);
         this._centerBox.set_y_align(Clutter.ActorAlign.FILL);
+
+        this._rightBox.add_style_class_name('vertical');
+        this._rightBox.set_vertical(true);
+        this._rightBox.set_x_align(Clutter.ActorAlign.FILL);
+        this._rightBox.set_y_align(Clutter.ActorAlign.END);
     },
 
     _set_horizontal_panel_style: function() {
-        this._rightBox.remove_style_class_name('vertical');
-        this._rightBox.set_vertical(false);
-        this._rightBox.set_x_align(Clutter.ActorAlign.END);
-        this._rightBox.set_y_align(Clutter.ActorAlign.FILL);
 
         this._leftBox.remove_style_class_name('vertical');
         this._leftBox.set_vertical(false);
@@ -2689,6 +2776,11 @@ Panel.prototype = {
         this._centerBox.set_vertical(false);
         this._centerBox.set_x_align(Clutter.ActorAlign.FILL);
         this._centerBox.set_y_align(Clutter.ActorAlign.FILL);
+
+        this._rightBox.remove_style_class_name('vertical');
+        this._rightBox.set_vertical(false);
+        this._rightBox.set_x_align(Clutter.ActorAlign.END);
+        this._rightBox.set_y_align(Clutter.ActorAlign.FILL);
     },
 
     _setFont: function(panelHeight) {
@@ -2806,11 +2898,12 @@ Panel.prototype = {
         let centerBoxOccupied = this._centerBox.get_n_children() > 0;
 
         /* If panel edit mode, pretend central box is occupied and give it at
-         * least width 25 so that things can be dropped into it */
+         * least a minimum width so that things can be dropped into it.
+           Note that this has to be combined with the box being given Clutter.ActorAlign.FILL */
         if (this._panelEditMode) {
             centerBoxOccupied  = true;
-            centerMinWidth     = Math.max(centerMinWidth, EDIT_MODE_MIN_BOX_SIZE);
-            centerNaturalWidth = Math.max(centerNaturalWidth, EDIT_MODE_MIN_BOX_SIZE);
+            centerMinWidth     = Math.max(centerMinWidth, EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
+            centerNaturalWidth = Math.max(centerNaturalWidth, EDIT_MODE_MIN_BOX_SIZE * global.ui_scale);
         }
 
         let totalMinWidth             = leftMinWidth + centerMinWidth + rightMinWidth;
@@ -2946,6 +3039,16 @@ Panel.prototype = {
 
         let allocHeight  = box.y2 - box.y1;
         let allocWidth   = box.x2 - box.x1;
+
+        /* The boxes are layout managers, so they rubber-band around their contents and have a few
+           characteristics that they enforce on their contents.  Of particular note is that the alignment
+           - LEFT, CENTER, RIGHT - is not independent of the fill as it probably ought to be, and that there
+           is this hybrid FILL alignment that also comes with implied left alignment (probably locale dependent).
+           Which is not a great problem when there is something in the box, but if there is nothing in the box and
+           something other than FILL alignment is chosen, then the boxes will have no size allocated.
+           Which is a bit of a bummer if you need to drag something into an empty box. So we need to work
+           around this. That's a manual size set when turning on edit mode, combined with adjustments after drop.
+           Note also that settings such as x_fill and y_fill only apply to the children of the box, not to the box itself */
 
         if (this.panelPosition == PanelLoc.left || this.panelPosition == PanelLoc.right) {
 
@@ -3332,5 +3435,11 @@ Panel.prototype = {
 
     getIsVisible: function() {
         return this._shouldShow;
+    },
+
+    resetDNDZones: function() {
+        this._leftBoxDNDHandler.reset();
+        this._centerBoxDNDHandler.reset();
+        this._rightBoxDNDHandler.reset();
     }
 };

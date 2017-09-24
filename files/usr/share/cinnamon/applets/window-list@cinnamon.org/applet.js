@@ -280,7 +280,7 @@ AppMenuButton.prototype = {
                 Lang.bind(this, this._getPreferredHeight));
         this.actor.connect('allocate', Lang.bind(this, this._allocate));
 
-        this.progressOverlay = new St.Widget({ style_class: "window-list-item-box", reactive: false, important: true  })
+        this.progressOverlay = new St.Widget({ style_class: "window-list-item-box", reactive: false, important: true  });
         this.progressOverlay.add_style_pseudo_class("progress");
 
         this.actor.add_actor(this.progressOverlay);
@@ -311,18 +311,25 @@ AppMenuButton.prototype = {
 
         if (this.metaWindow.progress !== undefined) {
             this._progress = this.metaWindow.progress;
-
+            if (this._progress > 0) {
+                this.progressOverlay.show();
+            } else
+                this.progressOverlay.hide();
             this._updateProgressId = this.metaWindow.connect("notify::progress", () => {
                 if (this.metaWindow.progress != this._progress) {
                     this._progress = this.metaWindow.progress;
 
-                    this.progressOverlay.visible = this._progress > 0;
+                    if (this._progress >0) {
+                        this.progressOverlay.show()
+                    } else {
+                        this.progressOverlay.hide();
+                    }
 
                     this.actor.queue_relayout();
                 }
             });
         } else {
-            this.progressOverlay.visible = false;
+            this.progressOverlay.hide();
         }
 
         /* TODO: this._progressPulse = this.metaWindow.progress_pulse; */
@@ -456,8 +463,9 @@ AppMenuButton.prototype = {
     },
 
     handleDragOver: function(source, actor, x, y, time) {
-        if (this._draggable && this._draggable.inhibit)
-            return DND.DragMotionResult.MOVE_DROP;
+        if (this._draggable && this._draggable.inhibit) {
+            return DND.DragMotionResult.CONTINUE;
+        }
 
         if (source instanceof AppMenuButton)
             return DND.DragMotionResult.CONTINUE;
@@ -719,10 +727,13 @@ AppMenuButton.prototype = {
 
         childBox.x1 = 0;
         childBox.y1 = 0;
+        childBox.x2 = this.actor.width;
         childBox.y2 = this.actor.height;
-        childBox.x2 = Math.max((this.actor.width) * (this._progress / 100.0), 1.0);
 
         this.progressOverlay.allocate(childBox, flags);
+
+        let clip_width = Math.max((this.actor.width) * (this._progress / 100.0), 1.0);
+        this.progressOverlay.set_clip(0, 0, clip_width, this.actor.height);
     },
 
     updateLabelVisible: function() {
@@ -958,12 +969,15 @@ AppMenuButtonRightClickMenu.prototype = {
             this._launcher._applet._menuOpen = true;
         else
             this._launcher._applet._menuOpen = false;
+    },
 
-        if (!isOpening) {
-            return;
+    toggle: function() {
+        if (!this.isOpen) {
+            this.removeAll();
+            this._populateMenu();
         }
-        this.removeAll();
-        this._populateMenu();
+
+        Applet.AppletPopupMenu.prototype.toggle.call(this);
     },
 };
 
